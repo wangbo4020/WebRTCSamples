@@ -360,12 +360,7 @@ public class PeerConnectionClient {
     }
 
     public void close() {
-        executor.execute(new Runnable() {
-            @Override
-            public void run() {
-                closeInternal();
-            }
-        });
+        executor.execute(() -> closeInternal());
     }
 
     public boolean isVideoCallEnabled() {

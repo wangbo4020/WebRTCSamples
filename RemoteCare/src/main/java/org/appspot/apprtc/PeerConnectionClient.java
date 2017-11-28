@@ -560,7 +560,7 @@ public class PeerConnectionClient {
         }
         // Create SDP constraints.
         sdpMediaConstraints = new MediaConstraints();
-        sdpMediaConstraints.mandatory.add(
+        sdpMediaConstraints.mandatory.add(// FIXME 暂时只使用DataChannel，不接收语音
                 new MediaConstraints.KeyValuePair("OfferToReceiveAudio", "false"));
         if (videoCallEnabled || peerConnectionParameters.loopback) {
             sdpMediaConstraints.mandatory.add(
@@ -598,7 +598,6 @@ public class PeerConnectionClient {
         rtcConfig.keyType = PeerConnection.KeyType.ECDSA;
 
         peerConnection = factory.createPeerConnection(rtcConfig, pcConstraints, pcObserver);
-        Log.d(TAG, "--- Create peer connection.");
 
         if (dataChannelEnabled) {
             DataChannel.Init init = new DataChannel.Init();
@@ -608,10 +607,29 @@ public class PeerConnectionClient {
             init.maxRetransmitTimeMs = peerConnectionParameters.dataChannelParameters.maxRetransmitTimeMs;
             init.id = peerConnectionParameters.dataChannelParameters.id;
             init.protocol = peerConnectionParameters.dataChannelParameters.protocol;
-            dataChannel = peerConnection.createDataChannel("ApprtcDemo data", init);
+            dataChannel = peerConnection.createDataChannel("ApprtcDemo", init);
+            dataChannel.registerObserver(new DataChannel.Observer() {
+                @Override
+                public void onBufferedAmountChange(long l) {
+                    Log.i(TAG, "DataChannel onBufferedAmountChange: " + l);
+                }
+
+                @Override
+                public void onStateChange() {
+                    if (dataChannel != null) {
+                        Log.i(TAG, "DataChannel onStateChange: " + dataChannel.state());
+                        dataChannel.send(new DataChannel.Buffer(ByteBuffer.wrap("Hello World!".getBytes()), true));
+                    }
+                }
+
+                @Override
+                public void onMessage(DataChannel.Buffer buffer) {
+                    Log.i(TAG, "DataChannel onMessage: " + buffer.binary/* + " " + new String(buffer.data)*/);
+                }
+            });
+            Log.i(TAG, "Creating data channel ApprtcDemo " + dataChannel.state());
         }
         isInitiator = false;
-        Log.d(TAG, "--- Create peer connection 1.");
 
         // Set default WebRTC tracing and INFO libjingle logging.
         // NOTE: this _must_ happen while |factory| is alive!
@@ -622,14 +640,12 @@ public class PeerConnectionClient {
         if (videoCallEnabled) {
             mediaStream.addTrack(createVideoTrack(videoCapturer));
         }
-        Log.d(TAG, "--- Create peer connection 2.");
 
         mediaStream.addTrack(createAudioTrack());
         peerConnection.addStream(mediaStream);
         if (videoCallEnabled) {
             findVideoSender();
         }
-        Log.d(TAG, "--- Create peer connection 3.");
 
         if (peerConnectionParameters.aecDump) {
             try {

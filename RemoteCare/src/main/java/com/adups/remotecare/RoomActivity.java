@@ -1,13 +1,11 @@
 package com.adups.remotecare;
 
 import android.app.Activity;
-import android.content.Context;
 import android.databinding.ViewDataBinding;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
-import android.support.v7.widget.RecyclerView.LayoutManager;
 import android.support.v7.widget.RecyclerView.ViewHolder;
 import android.text.TextUtils;
 import android.util.Log;
@@ -34,23 +32,14 @@ import org.appspot.apprtc.PeerConnectionClient.DataChannelParameters;
 import org.appspot.apprtc.PeerConnectionClient.PeerConnectionParameters;
 import org.appspot.apprtc.ProxyRenderer;
 import org.appspot.apprtc.WebSocketRTCClient;
-import org.webrtc.Camera1Enumerator;
-import org.webrtc.Camera2Enumerator;
-import org.webrtc.FileVideoCapturer;
 import org.webrtc.IceCandidate;
-import org.webrtc.Logging;
 import org.webrtc.SessionDescription;
 import org.webrtc.StatsReport;
-import org.webrtc.SurfaceTextureHelper;
-import org.webrtc.VideoCapturer;
-import org.webrtc.VideoRenderer;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static android.support.v7.widget.LinearLayoutManager.VERTICAL;
 import static com.adups.remotecare.model.MessageDescription.TYPE_NOTICE;
 import static com.adups.remotecare.model.MessageDescription.TYPE_OTHER;
 import static com.adups.remotecare.model.MessageDescription.TYPE_SELF;
@@ -87,6 +76,8 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	private List<MessageDescription> mLogs = new ArrayList<MessageDescription>();
 	private MessageDescription mInput = new MessageDescription();
 
+	private boolean mIceConnected;
+
 	@Override
 	protected void onCreate(@Nullable Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
@@ -106,6 +97,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 			finish();
 			return;
 		}
+
 		mInput.setNickname(mMineNickname = nickname);
 
 		// Initialize view
@@ -127,7 +119,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		mRoomConnParams = createRoomConnectionParameters(SERVER_ROOM_URL, roomId);
 		mPeerConnParams = createPeerConnectionParameters();
 
-		mPeerConnClient.createPeerConnectionFactory(this, mPeerConnParams, this);
+		mPeerConnClient.createPeerConnectionFactory(getApplicationContext(), mPeerConnParams, this);
 
 		mCallStartedTimeMs = System.currentTimeMillis();
 		mAppRTCClient.connectToRoom(mRoomConnParams);
@@ -181,6 +173,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 
 	private PeerConnectionParameters createPeerConnectionParameters() {
 		DataChannelParameters dataChannelParameters =
+//				null;
 				new DataChannelParameters(true, -1, 3, "", true, 1);
 		return new PeerConnectionParameters(
 				false, false, false,
@@ -202,18 +195,18 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 
 			mSignalingParams = params;
 
-			ProxyRenderer proxy = new ProxyRenderer("localProxyRenderer");
+			ProxyRenderer proxy = null;//new ProxyRenderer("localProxyRenderer");
 			mPeerConnClient.createPeerConnection(proxy, proxy, null, mSignalingParams);
 
 			if (mSignalingParams.initiator) {
-				addNotice("Create Offer");
+				addNotice("Creating OFFER...");
 				// Create offer. Offer SDP will be sent to answering client in
 				// PeerConnectionEvents.onLocalDescription event.
 				mPeerConnClient.createOffer();
 			} else {
 				if (mSignalingParams.offerSdp != null) {
 					mPeerConnClient.setRemoteDescription(params.offerSdp);
-					addNotice("Create Answer");
+					addNotice("Creating ANSWER...");
 					// Create answer. Answer SDP will be sent to offering client in
 					// PeerConnectionEvents.onLocalDescription event.
 					mPeerConnClient.createAnswer();
@@ -232,25 +225,56 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 
 	@Override
 	public void onRemoteDescription(SessionDescription sdp) {
+		final long delta = System.currentTimeMillis() - mCallStartedTimeMs;
 		Log.d(TAG, "onRemoteDescription: " + sdp);
+		runOnUiThread(() -> {
+			if (mPeerConnClient == null) {
+				addNotice("Received remote SDP for non-initilized peer connection");
+				return;
+			}
+			addNotice("Received remote " + sdp.type + ", delay=" + delta + "ms");
+			mPeerConnClient.setRemoteDescription(sdp);
+			if (!mSignalingParams.initiator) {
+				addNotice("Creating ANSWER...");
+				// Create answer. Answer SDP will be sent to offering client in
+				// PeerConnectionEvents.onLocalDescription event.
+				mPeerConnClient.createAnswer();
+			}
+			commint();
+		});
 	}
 
 	@Override
 	public void onRemoteIceCandidate(IceCandidate candidate) {
 		Log.d(TAG, "onRemoteIceCandidate: " + candidate);
-
+		runOnUiThread(() -> {
+			if (mPeerConnClient == null) {
+				Log.e(TAG, "Received ICE candidate for a non-initialized peer connection.");
+				return;
+			}
+			mPeerConnClient.addRemoteIceCandidate(candidate);
+		});
 	}
 
 	@Override
 	public void onRemoteIceCandidatesRemoved(IceCandidate[] candidates) {
 		Log.d(TAG, "onRemoteIceCandidatesRemoved: " + candidates);
-
+		runOnUiThread(() -> {
+			if (mPeerConnClient == null) {
+				Log.e(TAG, "Received ICE candidate removals for a non-initialized peer connection.");
+				return;
+			}
+			mPeerConnClient.removeRemoteIceCandidates(candidates);
+		});
 	}
 
 	@Override
 	public void onChannelClose() {
 		Log.d(TAG, "onChannelClose: ");
-
+		runOnUiThread(() -> {
+			addNotice("Remote end hung up; dropping PeerConnection");
+			commint();
+		});
 	}
 
 	@Override
@@ -278,6 +302,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 					mAppRTCClient.sendAnswerSdp(sdp);
 				}
 			}
+			commint();
 		});
 	}
 
@@ -294,19 +319,32 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	@Override
 	public void onIceCandidatesRemoved(IceCandidate[] candidates) {
 		Log.d(TAG, "onIceCandidatesRemoved: " + candidates);
-
+		runOnUiThread(() -> {
+			if (mAppRTCClient != null) {
+				mAppRTCClient.sendLocalIceCandidateRemovals(candidates);
+			}
+		});
 	}
 
 	@Override
 	public void onIceConnected() {
+		final long delta = System.currentTimeMillis() - mCallStartedTimeMs;
 		Log.d(TAG, "onIceConnected: ");
-
+		runOnUiThread(() -> {
+			addNotice("ICE connected, delay=" + delta + "ms");
+			mIceConnected = true;
+			commint();
+		});
 	}
 
 	@Override
 	public void onIceDisconnected() {
 		Log.d(TAG, "onIceDisconnected: ");
-
+		runOnUiThread(() -> {
+			addNotice("ICE disconnected");
+			mIceConnected = false;
+			commint();
+		});
 	}
 
 	@Override
