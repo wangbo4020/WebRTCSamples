@@ -14,6 +14,7 @@ import android.content.Context;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
+import android.util.SparseArray;
 
 import org.appspot.apprtc.AppRTCClient.SignalingParameters;
 import org.webrtc.AudioSource;
@@ -50,7 +51,7 @@ import org.webrtc.voiceengine.WebRtcAudioUtils;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -154,13 +155,16 @@ public class PeerConnectionClient {
     // enableAudio is set to true if audio should be sent.
     private boolean enableAudio;
     private AudioTrack localAudioTrack;
-    private DataChannel dataChannel;
+//    private DataChannel dataChannel;
     private boolean dataChannelEnabled;
+    private DataChannelObserver dataChannelObserver;
+    private DataChannelManager dataChannelManager;
 
     /**
      * Peer connection parameters.
      */
     public static class DataChannelParameters {
+        public final String label;
         public final boolean ordered;
         public final int maxRetransmitTimeMs;
         public final int maxRetransmits;
@@ -168,8 +172,9 @@ public class PeerConnectionClient {
         public final boolean negotiated;
         public final int id;
 
-        public DataChannelParameters(boolean ordered, int maxRetransmitTimeMs, int maxRetransmits,
+        public DataChannelParameters(String label, boolean ordered, int maxRetransmitTimeMs, int maxRetransmits,
                                      String protocol, boolean negotiated, int id) {
+            this.label = label;
             this.ordered = ordered;
             this.maxRetransmitTimeMs = maxRetransmitTimeMs;
             this.maxRetransmits = maxRetransmits;
@@ -285,6 +290,11 @@ public class PeerConnectionClient {
         void onPeerConnectionClosed();
 
         /**
+         * Callback fired once peer connection is data channel
+         */
+        void onDataChannelAdded(DataChannel dc);
+
+        /**
          * Callback fired once peer connection statistics is ready.
          */
         void onPeerConnectionStatsReady(final StatsReport[] reports);
@@ -293,6 +303,12 @@ public class PeerConnectionClient {
          * Callback fired once peer connection error happened.
          */
         void onPeerConnectionError(final String description);
+    }
+
+    public interface DataChannelObserver {
+        void onBufferedAmountChange(DataChannel dc, long previousAmount);
+        void onStateChange(DataChannel dc);
+        void onMessage(DataChannel dc, DataChannel.Buffer buffer);
     }
 
     public PeerConnectionClient() {
@@ -304,7 +320,8 @@ public class PeerConnectionClient {
     }
 
     public void createPeerConnectionFactory(final Context context,
-                                            final PeerConnectionParameters peerConnectionParameters, final PeerConnectionEvents events) {
+                                            final PeerConnectionParameters peerConnectionParameters,
+                                            final PeerConnectionEvents events) {
         this.peerConnectionParameters = peerConnectionParameters;
         this.events = events;
         videoCallEnabled = peerConnectionParameters.videoCallEnabled;
@@ -332,14 +349,14 @@ public class PeerConnectionClient {
 
     public void createPeerConnection(final VideoSink localRender,
                                      final VideoRenderer.Callbacks remoteRender, final VideoCapturer videoCapturer,
-                                     final SignalingParameters signalingParameters) {
+                                     final SignalingParameters signalingParameters, DataChannelObserver dataChannelObserver) {
         createPeerConnection(
-                localRender, Collections.singletonList(remoteRender), videoCapturer, signalingParameters);
+                localRender, Collections.singletonList(remoteRender), videoCapturer, signalingParameters, dataChannelObserver);
     }
 
     public void createPeerConnection(final VideoSink localRender,
                                      final List<VideoRenderer.Callbacks> remoteRenders, final VideoCapturer videoCapturer,
-                                     final SignalingParameters signalingParameters) {
+                                     final SignalingParameters signalingParameters, DataChannelObserver dataChannelObserver) {
         if (peerConnectionParameters == null) {
             Log.e(TAG, "Creating peer connection without initializing factory.");
             return;
@@ -348,6 +365,7 @@ public class PeerConnectionClient {
         this.remoteRenders = remoteRenders;
         this.videoCapturer = videoCapturer;
         this.signalingParameters = signalingParameters;
+        this.dataChannelObserver = dataChannelObserver;
         executor.execute(() -> {
 			try {
 				createMediaConstraintsInternal();
@@ -600,6 +618,8 @@ public class PeerConnectionClient {
         peerConnection = factory.createPeerConnection(rtcConfig, pcConstraints, pcObserver);
 
         if (dataChannelEnabled) {
+            dataChannelManager = new DataChannelManager();
+
             DataChannel.Init init = new DataChannel.Init();
             init.ordered = peerConnectionParameters.dataChannelParameters.ordered;
             init.negotiated = peerConnectionParameters.dataChannelParameters.negotiated;
@@ -607,26 +627,9 @@ public class PeerConnectionClient {
             init.maxRetransmitTimeMs = peerConnectionParameters.dataChannelParameters.maxRetransmitTimeMs;
             init.id = peerConnectionParameters.dataChannelParameters.id;
             init.protocol = peerConnectionParameters.dataChannelParameters.protocol;
-            dataChannel = peerConnection.createDataChannel("ApprtcDemo", init);
-            dataChannel.registerObserver(new DataChannel.Observer() {
-                @Override
-                public void onBufferedAmountChange(long l) {
-                    Log.i(TAG, "DataChannel onBufferedAmountChange: " + l);
-                }
-
-                @Override
-                public void onStateChange() {
-                    if (dataChannel != null) {
-                        Log.i(TAG, "DataChannel onStateChange: " + dataChannel.state());
-                        dataChannel.send(new DataChannel.Buffer(ByteBuffer.wrap("Hello World!".getBytes()), true));
-                    }
-                }
-
-                @Override
-                public void onMessage(DataChannel.Buffer buffer) {
-                    Log.i(TAG, "DataChannel onMessage: " + buffer.binary/* + " " + new String(buffer.data)*/);
-                }
-            });
+            DataChannel dataChannel = peerConnection.createDataChannel(peerConnectionParameters.dataChannelParameters.label, init);
+            dataChannelManager.manage(dataChannel);
+            dataChannelManager.obs(init.id, dataChannelObserver);
             Log.i(TAG, "Creating data channel ApprtcDemo " + dataChannel.state());
         }
         isInitiator = false;
@@ -669,9 +672,9 @@ public class PeerConnectionClient {
         }
         Log.d(TAG, "Closing peer connection.");
         statsTimer.cancel();
-        if (dataChannel != null) {
-            dataChannel.dispose();
-            dataChannel = null;
+        if (dataChannelManager != null) {
+            dataChannelManager.disposeAll();
+            dataChannelManager = null;
         }
         if (peerConnection != null) {
             peerConnection.dispose();
@@ -700,6 +703,7 @@ public class PeerConnectionClient {
         }
         localRender = null;
         remoteRenders = null;
+        dataChannelObserver = null;
         Log.d(TAG, "Closing peer connection factory.");
         if (factory != null) {
             factory.dispose();
@@ -1104,21 +1108,11 @@ public class PeerConnectionClient {
     }
 
     public void switchCamera() {
-        executor.execute(new Runnable() {
-            @Override
-            public void run() {
-                switchCameraInternal();
-            }
-        });
+        executor.execute(() -> switchCameraInternal());
     }
 
     public void changeCaptureFormat(final int width, final int height, final int framerate) {
-        executor.execute(new Runnable() {
-            @Override
-            public void run() {
-                changeCaptureFormatInternal(width, height, framerate);
-            }
-        });
+        executor.execute(() -> changeCaptureFormatInternal(width, height, framerate));
     }
 
     private void changeCaptureFormatInternal(int width, int height, int framerate) {
@@ -1204,29 +1198,7 @@ public class PeerConnectionClient {
             if (!dataChannelEnabled)
                 return;
 
-            dc.registerObserver(new DataChannel.Observer() {
-                public void onBufferedAmountChange(long previousAmount) {
-                    Log.d(TAG, "Data channel buffered amount changed: " + dc.label() + ": " + dc.state());
-                }
-
-                @Override
-                public void onStateChange() {
-                    Log.d(TAG, "Data channel state changed: " + dc.label() + ": " + dc.state());
-                }
-
-                @Override
-                public void onMessage(final DataChannel.Buffer buffer) {
-                    if (buffer.binary) {
-                        Log.d(TAG, "Received binary msg over " + dc);
-                        return;
-                    }
-                    ByteBuffer data = buffer.data;
-                    final byte[] bytes = new byte[data.capacity()];
-                    data.get(bytes);
-                    String strData = new String(bytes);
-                    Log.d(TAG, "Got msg: " + strData + " over " + dc);
-                }
-            });
+            executor.execute(() -> events.onDataChannelAdded(dc));
         }
 
         @Override
@@ -1258,55 +1230,49 @@ public class PeerConnectionClient {
             }
             final SessionDescription sdp = new SessionDescription(origSdp.type, sdpDescription);
             localSdp = sdp;
-            executor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    if (peerConnection != null && !isError) {
-                        Log.d(TAG, "Set local SDP from " + sdp.type);
-                        peerConnection.setLocalDescription(sdpObserver, sdp);
-                    }
-                }
-            });
+            executor.execute(() -> {
+				if (peerConnection != null && !isError) {
+					Log.d(TAG, "Set local SDP from " + sdp.type);
+					peerConnection.setLocalDescription(sdpObserver, sdp);
+				}
+			});
         }
 
         @Override
         public void onSetSuccess() {
-            executor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    if (peerConnection == null || isError) {
-                        return;
-                    }
-                    if (isInitiator) {
-                        // For offering peer connection we first create offer and set
-                        // local SDP, then after receiving answer set remote SDP.
-                        if (peerConnection.getRemoteDescription() == null) {
-                            // We've just set our local SDP so time to send it.
-                            Log.d(TAG, "Local SDP set succesfully");
-                            events.onLocalDescription(localSdp);
-                        } else {
-                            // We've just set remote description, so drain remote
-                            // and send local ICE candidates.
-                            Log.d(TAG, "Remote SDP set succesfully");
-                            drainCandidates();
-                        }
-                    } else {
-                        // For answering peer connection we set remote SDP and then
-                        // create answer and set local SDP.
-                        if (peerConnection.getLocalDescription() != null) {
-                            // We've just set our local SDP so time to send it, drain
-                            // remote and send local ICE candidates.
-                            Log.d(TAG, "Local SDP set succesfully");
-                            events.onLocalDescription(localSdp);
-                            drainCandidates();
-                        } else {
-                            // We've just set remote SDP - do nothing for now -
-                            // answer will be created soon.
-                            Log.d(TAG, "Remote SDP set succesfully");
-                        }
-                    }
-                }
-            });
+            executor.execute(() -> {
+				if (peerConnection == null || isError) {
+					return;
+				}
+				if (isInitiator) {
+					// For offering peer connection we first create offer and set
+					// local SDP, then after receiving answer set remote SDP.
+					if (peerConnection.getRemoteDescription() == null) {
+						// We've just set our local SDP so time to send it.
+						Log.d(TAG, "Local SDP set succesfully");
+						events.onLocalDescription(localSdp);
+					} else {
+						// We've just set remote description, so drain remote
+						// and send local ICE candidates.
+						Log.d(TAG, "Remote SDP set succesfully");
+						drainCandidates();
+					}
+				} else {
+					// For answering peer connection we set remote SDP and then
+					// create answer and set local SDP.
+					if (peerConnection.getLocalDescription() != null) {
+						// We've just set our local SDP so time to send it, drain
+						// remote and send local ICE candidates.
+						Log.d(TAG, "Local SDP set succesfully");
+						events.onLocalDescription(localSdp);
+						drainCandidates();
+					} else {
+						// We've just set remote SDP - do nothing for now -
+						// answer will be created soon.
+						Log.d(TAG, "Remote SDP set succesfully");
+					}
+				}
+			});
         }
 
         @Override
@@ -1317,6 +1283,119 @@ public class PeerConnectionClient {
         @Override
         public void onSetFailure(final String error) {
             reportError("setSDP error: " + error);
+        }
+    }
+
+    private class DCObserver implements DataChannel.Observer {
+
+        private DataChannel dc;
+        private DataChannelObserver dcObserver;
+        public DCObserver(DataChannel dc, DataChannelObserver dcObserver) {
+            this.dc = dc;
+            this.dcObserver = dcObserver;
+
+            this.dc.registerObserver(this);
+        }
+
+        public void onBufferedAmountChange(long previousAmount) {
+            executor.execute(() -> {
+                if (dcObserver != null) {
+                    dcObserver.onBufferedAmountChange(dc, previousAmount);
+                }
+            });
+        }
+
+        @Override
+        public void onStateChange() {
+            executor.execute(() -> {
+                if (dcObserver != null) {
+                    dcObserver.onStateChange(dc);
+                }
+            });
+        }
+
+        @Override
+        public void onMessage(DataChannel.Buffer buffer) {
+            executor.execute(() -> {
+                if (dcObserver != null) {
+                    dcObserver.onMessage(dc, buffer);
+                }
+            });
+        }
+    }
+
+    public void obs(DataChannel dc, DataChannelObserver observer) {
+        if (dataChannelManager != null) {
+            dataChannelManager.manage(dc);
+            dataChannelManager.obs(dc.id(), observer);
+        }
+    }
+
+    public void send(int id, DataChannel.Buffer buffer) {
+        executor.execute(() -> {
+//            buffer.data.flip();
+//            byte[] bytesBuf = new byte[buffer.data.capacity()];
+//            buffer.data.get(bytesBuf);
+//            try {
+//                Log.d(TAG, "send: " + new String(bytesBuf, "UTF-8"));
+//            } catch (UnsupportedEncodingException e) {
+//                e.printStackTrace();
+//            }
+            sendSync(id, buffer);
+        });
+    }
+
+    public boolean sendSync(int id, DataChannel.Buffer buffer) {
+        if (dataChannelEnabled && dataChannelManager != null) {
+            return dataChannelManager.send(id, buffer);
+        } else {
+            return false;
+        }
+    }
+
+    private class DataChannelManager {
+
+        private SparseArray<DataChannel> dcs;
+
+        public DataChannelManager() {
+            this.dcs = new SparseArray<DataChannel>(1);
+        }
+
+        public void manage(DataChannel dc) {
+            if (-1 != dcs.indexOfKey(dc.id())) {
+                return;
+            }
+            dcs.put(dc.id(), dc);
+        }
+
+        public void obs(int id, DataChannelObserver observer) {
+            // 不做null判断，由外部保证
+            DataChannel dc = dcs.get(id);
+            new DCObserver(dc, observer);
+        }
+
+        public boolean send(int id, DataChannel.Buffer buffer) {
+            // 不做null判断，由外部保证
+            DataChannel dc = dcs.get(id);
+            if (dc.state() == DataChannel.State.OPEN) {
+                return dc.send(buffer);
+            }
+            return false;
+        }
+
+        public void dispose(int id) {
+            // 不做null判断，由外部保证
+            DataChannel dc = dcs.get(id);
+            dc.dispose();
+            dcs.remove(id);
+        }
+
+        public void disposeAll() {
+            for (int i = dcs.size(); i > 0; i--) {
+                DataChannel dc = dcs.valueAt(0);
+                dc.dispose();
+                dcs.removeAt(0);
+            }
         }
     }
 }

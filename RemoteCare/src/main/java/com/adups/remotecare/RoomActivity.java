@@ -32,10 +32,17 @@ import org.appspot.apprtc.PeerConnectionClient.DataChannelParameters;
 import org.appspot.apprtc.PeerConnectionClient.PeerConnectionParameters;
 import org.appspot.apprtc.ProxyRenderer;
 import org.appspot.apprtc.WebSocketRTCClient;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.webrtc.DataChannel;
 import org.webrtc.IceCandidate;
 import org.webrtc.SessionDescription;
 import org.webrtc.StatsReport;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -48,12 +55,17 @@ import static com.adups.remotecare.model.MessageDescription.TYPE_SELF;
  * Created by Dylan on 2017/11/23.
  */
 
-public class RoomActivity extends Activity implements SignalingEvents, PeerConnectionClient.PeerConnectionEvents {
+public class RoomActivity extends Activity implements SignalingEvents, PeerConnectionClient.PeerConnectionEvents, PeerConnectionClient.DataChannelObserver {
 
 	public static final String TAG = "RoomActivity";
 
 	public static final String EXTRA_ROOM_ID = "room_id";
 	public static final String EXTRA_NICKNAME = "nickname";
+
+	public static final String KEY_NICKNAME = "nickname";
+	public static final String KEY_MESSAGE = "message";
+
+	public static final int DC_CHAT = 1;
 
 	private static final String SERVER_ROOM_URL = "https://dev.remotecare.cn:9080";
 
@@ -138,7 +150,30 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	}
 
 	public void onClickSend(View view) {
+		String nickname = (String) mMineNickname;
+		String message = mInput.getContent().toString();
+		JSONObject json = new JSONObject();
+		try {
+			json.put(KEY_NICKNAME, nickname);
+			json.put(KEY_MESSAGE, message);
 
+			if (mPeerConnClient != null) {
+//				byte[] bytes = json.toString().getBytes("UTF-8");
+//				Log.d(TAG, "onClickSend: bytes " + new String(bytes, "UTF-8"));
+//				ByteBuffer bbuf = ByteBuffer.wrap(bytes);
+
+				ByteBuffer bbuf = encode(json.toString());
+
+				DataChannel.Buffer buffer = new DataChannel.Buffer(bbuf, false);
+				mPeerConnClient.send(DC_CHAT, buffer);
+			}
+			logs(nickname, message, true);
+			commint();
+		} catch (JSONException e) {
+			e.printStackTrace();
+		} catch (CharacterCodingException e) {
+			e.printStackTrace();
+		}
 	}
 
 	private void setSendEnabled(boolean enabled) {
@@ -146,13 +181,19 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		mBtnSend.setEnabled(enabled);
 	}
 
-	private void addNotice(CharSequence msg) {
-		Log.d(TAG, "addNotice: " + msg);
+	private void notice(CharSequence msg) {
+		Log.d(TAG, "notice: " + msg);
 		mLogs.add(new MessageDescription("notice", msg, TYPE_NOTICE));
+	}
+
+	private void logs(CharSequence nickname, CharSequence msg, boolean self) {
+		Log.d(TAG, "logs: " + nickname + " -> " + msg);
+		mLogs.add(new MessageDescription(nickname, msg, self ? TYPE_SELF : TYPE_OTHER));
 	}
 
 	private void commint() {
 		mLogsAdapter.notifyDataSetChanged();
+		mRecyclerLogs.smoothScrollToPosition(mRecyclerLogs.getAdapter().getItemCount() - 1);
 	}
 
 	private AppRTCClient createAppRTCClient(String roomId, SignalingEvents events) {
@@ -174,7 +215,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	private PeerConnectionParameters createPeerConnectionParameters() {
 		DataChannelParameters dataChannelParameters =
 //				null;
-				new DataChannelParameters(true, -1, 3, "", true, 1);
+				new DataChannelParameters("Demo-" + DC_CHAT, true, -1, 3, "", true, DC_CHAT);
 		return new PeerConnectionParameters(
 				false, false, false,
 				0, 0, 0, 0,
@@ -191,22 +232,22 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onConnectedToRoom(final SignalingParameters params) {
 		Log.d(TAG, "onConnectedToRoom: " + params);
 		runOnUiThread(() -> {
-			addNotice("onConnectedToRoom");
+			notice("onConnectedToRoom");
 
 			mSignalingParams = params;
 
 			ProxyRenderer proxy = null;//new ProxyRenderer("localProxyRenderer");
-			mPeerConnClient.createPeerConnection(proxy, proxy, null, mSignalingParams);
+			mPeerConnClient.createPeerConnection(proxy, proxy, null, mSignalingParams, this);
 
 			if (mSignalingParams.initiator) {
-				addNotice("Creating OFFER...");
+				notice("Creating OFFER...");
 				// Create offer. Offer SDP will be sent to answering client in
 				// PeerConnectionEvents.onLocalDescription event.
 				mPeerConnClient.createOffer();
 			} else {
 				if (mSignalingParams.offerSdp != null) {
 					mPeerConnClient.setRemoteDescription(params.offerSdp);
-					addNotice("Creating ANSWER...");
+					notice("Creating ANSWER...");
 					// Create answer. Answer SDP will be sent to offering client in
 					// PeerConnectionEvents.onLocalDescription event.
 					mPeerConnClient.createAnswer();
@@ -229,13 +270,13 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		Log.d(TAG, "onRemoteDescription: " + sdp);
 		runOnUiThread(() -> {
 			if (mPeerConnClient == null) {
-				addNotice("Received remote SDP for non-initilized peer connection");
+				notice("Received remote SDP for non-initilized peer connection");
 				return;
 			}
-			addNotice("Received remote " + sdp.type + ", delay=" + delta + "ms");
+			notice("Received remote " + sdp.type + ", delay=" + delta + "ms");
 			mPeerConnClient.setRemoteDescription(sdp);
 			if (!mSignalingParams.initiator) {
-				addNotice("Creating ANSWER...");
+				notice("Creating ANSWER...");
 				// Create answer. Answer SDP will be sent to offering client in
 				// PeerConnectionEvents.onLocalDescription event.
 				mPeerConnClient.createAnswer();
@@ -272,7 +313,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onChannelClose() {
 		Log.d(TAG, "onChannelClose: ");
 		runOnUiThread(() -> {
-			addNotice("Remote end hung up; dropping PeerConnection");
+			notice("Remote end hung up; dropping PeerConnection");
 			commint();
 		});
 	}
@@ -281,7 +322,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onChannelError(String description) {
 		Log.d(TAG, "onChannelError: " + description);
 		runOnUiThread(() -> {
-			addNotice(description);
+			notice(description);
 
 			commint();
 		});
@@ -295,7 +336,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		final long delta = System.currentTimeMillis() - mCallStartedTimeMs;
 		runOnUiThread(() -> {
 			if (mAppRTCClient != null) {
-				addNotice("Sending " + sdp.type + "， delay = " + delta + "ms");
+				notice("Sending " + sdp.type + "， delay = " + delta + "ms");
 				if (mSignalingParams.initiator) {
 					mAppRTCClient.sendOfferSdp(sdp);
 				} else {
@@ -331,7 +372,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		final long delta = System.currentTimeMillis() - mCallStartedTimeMs;
 		Log.d(TAG, "onIceConnected: ");
 		runOnUiThread(() -> {
-			addNotice("ICE connected, delay=" + delta + "ms");
+			notice("ICE connected, delay=" + delta + "ms");
 			mIceConnected = true;
 			commint();
 		});
@@ -341,7 +382,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onIceDisconnected() {
 		Log.d(TAG, "onIceDisconnected: ");
 		runOnUiThread(() -> {
-			addNotice("ICE disconnected");
+			notice("ICE disconnected");
 			mIceConnected = false;
 			commint();
 		});
@@ -354,6 +395,16 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	}
 
 	@Override
+	public void onDataChannelAdded(DataChannel dc) {
+		Log.d(TAG, "onDataChannelAdded: label: " + dc.label() + ", state: " + dc.state());
+		runOnUiThread(() -> {
+			notice("Peer data channel added.");
+			mPeerConnClient.obs(dc, RoomActivity.this);
+			commint();
+		});
+	}
+
+	@Override
 	public void onPeerConnectionStatsReady(StatsReport[] reports) {
 		Log.d(TAG, "onPeerConnectionStatsReady: " + Arrays.toString(reports));
 
@@ -363,9 +414,61 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onPeerConnectionError(String description) {
 		Log.d(TAG, "onPeerConnectionError: " + description);
 		runOnUiThread(() -> {
-			addNotice(description);
+			notice(description);
 			commint();
 		});
+	}
+
+	// -------------------- DataChannelObserver --------------------
+
+	@Override
+	public void onBufferedAmountChange(DataChannel dc, long previousAmount) {
+		Log.d(TAG, "Data channel buffered amount changed: " + dc.label() + ": " + dc.state());
+	}
+
+	@Override
+	public void onStateChange(DataChannel dc) {
+		Log.d(TAG, "Data channel state changed: " + dc.label() + ": " + dc.state());
+		runOnUiThread(() -> {
+			switch (dc.id()) {
+				case DC_CHAT:
+					setSendEnabled(dc.state() == DataChannel.State.OPEN);
+					break;
+			}
+		});
+	}
+
+	@Override
+	public void onMessage(DataChannel dc, DataChannel.Buffer buffer) {
+
+		runOnUiThread(() -> {
+			if (buffer.binary) {
+				Log.d(TAG, "Received binary msg over " + dc);
+				return;
+			}
+
+			try {
+				String strData = decode(buffer.data);
+				Log.d(TAG, "Got msg: " + strData + " over " + dc);
+				JSONObject json = new JSONObject(strData);
+				String nickname = json.getString(KEY_NICKNAME);
+				String message = json.getString(KEY_MESSAGE);
+				logs(nickname, message, false);
+				commint();
+			} catch (Exception ex) {
+				ex.printStackTrace();
+			}
+		});
+	}
+
+	private ByteBuffer encode(String str) throws CharacterCodingException {
+		return Charset.forName("UTF-8").newEncoder().encode(CharBuffer.wrap(str.toCharArray()));
+	}
+
+	private String decode(ByteBuffer buffer) throws CharacterCodingException {
+//		buffer.clear();
+		Log.d(TAG, "decode: position " + buffer.position() + ", limit " + buffer.limit() + ", capacity " + buffer.capacity());
+		return Charset.forName("UTF-8").newDecoder().decode(buffer).toString();
 	}
 
 	static class LogsAdapter extends RecyclerView.Adapter<LogsAdapter.LogsHolder> {

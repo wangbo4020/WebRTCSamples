@@ -47,6 +47,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="0.2"
+                android:onClick="onClickSend"
                 android:text="发送" />
         </LinearLayout>
 

@@ -37,6 +37,7 @@
             android:paddingRight="15dp"
             android:text="@{msg.content}"
             android:textAppearance="?android:attr/textAppearanceLarge"
+            android:textIsSelectable="true"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintRight_toRightOf="parent"
             app:layout_constraintTop_toBottomOf="@+id/tv_nickname"
