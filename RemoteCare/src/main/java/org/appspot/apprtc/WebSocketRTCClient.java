@@ -226,6 +226,7 @@ public class WebSocketRTCClient implements AppRTCClient, WebSocketChannelEvents 
 				}
 			} else {
 				// Call receiver sends ice candidates to websocket server.
+				Log.d(TAG, "sendLocalIceCandidate: " + "send no msg");
 				wsClient.send(json.toString());
 			}
 		});

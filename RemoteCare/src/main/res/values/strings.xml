@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">RemoteCare</string>
+    <string name="toggle_debug">Toggle debug view</string>
 </resources>

@@ -703,7 +703,6 @@ public class PeerConnectionClient {
         }
         localRender = null;
         remoteRenders = null;
-        dataChannelObserver = null;
         Log.d(TAG, "Closing peer connection factory.");
         if (factory != null) {
             factory.dispose();
@@ -715,6 +714,7 @@ public class PeerConnectionClient {
         events.onPeerConnectionClosed();
         PeerConnectionFactory.stopInternalTracingCapture();
         PeerConnectionFactory.shutdownInternalTracer();
+        dataChannelObserver = null;
         events = null;
     }
 
@@ -1198,7 +1198,13 @@ public class PeerConnectionClient {
             if (!dataChannelEnabled)
                 return;
 
-            executor.execute(() -> events.onDataChannelAdded(dc));
+            executor.execute(() -> {
+                if (dataChannelManager != null) {
+                    dataChannelManager.manage(dc, true);
+                    dataChannelManager.obs(dc.id(), dataChannelObserver);
+                }
+                events.onDataChannelAdded(dc);
+            });
         }
 
         @Override
@@ -1286,61 +1292,8 @@ public class PeerConnectionClient {
         }
     }
 
-    private class DCObserver implements DataChannel.Observer {
-
-        private DataChannel dc;
-        private DataChannelObserver dcObserver;
-        public DCObserver(DataChannel dc, DataChannelObserver dcObserver) {
-            this.dc = dc;
-            this.dcObserver = dcObserver;
-
-            this.dc.registerObserver(this);
-        }
-
-        public void onBufferedAmountChange(long previousAmount) {
-            executor.execute(() -> {
-                if (dcObserver != null) {
-                    dcObserver.onBufferedAmountChange(dc, previousAmount);
-                }
-            });
-        }
-
-        @Override
-        public void onStateChange() {
-            executor.execute(() -> {
-                if (dcObserver != null) {
-                    dcObserver.onStateChange(dc);
-                }
-            });
-        }
-
-        @Override
-        public void onMessage(DataChannel.Buffer buffer) {
-            executor.execute(() -> {
-                if (dcObserver != null) {
-                    dcObserver.onMessage(dc, buffer);
-                }
-            });
-        }
-    }
-
-    public void obs(DataChannel dc, DataChannelObserver observer) {
-        if (dataChannelManager != null) {
-            dataChannelManager.manage(dc);
-            dataChannelManager.obs(dc.id(), observer);
-        }
-    }
-
     public void send(int id, DataChannel.Buffer buffer) {
         executor.execute(() -> {
-//            buffer.data.flip();
-//            byte[] bytesBuf = new byte[buffer.data.capacity()];
-//            buffer.data.get(bytesBuf);
-//            try {
-//                Log.d(TAG, "send: " + new String(bytesBuf, "UTF-8"));
-//            } catch (UnsupportedEncodingException e) {
-//                e.printStackTrace();
-//            }
             sendSync(id, buffer);
         });
     }
@@ -1355,45 +1308,118 @@ public class PeerConnectionClient {
 
     private class DataChannelManager {
 
-        private SparseArray<DataChannel> dcs;
+        /**
+         * DataChannel.Observer不能内存泄露，否则so层回收不了内存会导致崩溃
+         */
+        private class Params implements DataChannel.Observer {
+            /**
+             * DataChannel.id()
+             */
+            int id;
+            /**
+             * 完全来自远程对等端创建的DataChannel
+             */
+            boolean remote;
+            DataChannel dc;
+            DataChannelObserver dcObs;
 
-        public DataChannelManager() {
-            this.dcs = new SparseArray<DataChannel>(1);
+            public Params(DataChannel dc) {
+                this.dc = dc;
+                this.id = dc.id();
+            }
+
+            public Params(DataChannel dc, boolean remote) {
+                this(dc);
+                this.remote = remote;
+            }
+
+            public void obs(DataChannelObserver dataChannelObserver) {
+                this.dcObs = dataChannelObserver;
+                this.dc.registerObserver(this);
+            }
+
+            public void unobs() {
+                this.dc.unregisterObserver();
+            }
+
+            public void dispose() {
+                unobs();
+                this.dc.dispose();
+                this.dc = null;
+                this.dcObs = null;
+            }
+
+
+            public void onBufferedAmountChange(long previousAmount) {
+                executor.execute(() -> {
+                    if (dcObs != null) {
+                        dcObs.onBufferedAmountChange(dc, previousAmount);
+                    }
+                });
+            }
+
+            @Override
+            public void onStateChange() {
+                executor.execute(() -> {
+                    if (dcObs != null) {
+                        dcObs.onStateChange(dc);
+                    }
+                });
+            }
+
+            @Override
+            public void onMessage(DataChannel.Buffer buffer) {
+                executor.execute(() -> {
+                    if (dcObs != null) {
+                        dcObs.onMessage(dc, buffer);
+                    }
+                });
+            }
         }
 
-        public void manage(DataChannel dc) {
+        private SparseArray<Params> dcs;
+
+        public DataChannelManager() {
+            this.dcs = new SparseArray<Params>(1);
+        }
+
+        public void manage(DataChannel dc, boolean remote) {
             if (-1 != dcs.indexOfKey(dc.id())) {
                 return;
             }
-            dcs.put(dc.id(), dc);
+            dcs.put(dc.id(), new Params(dc, remote));
+        }
+
+        public void manage(DataChannel dc) {
+            manage(dc, false);
         }
 
         public void obs(int id, DataChannelObserver observer) {
             // 不做null判断，由外部保证
-            DataChannel dc = dcs.get(id);
-            new DCObserver(dc, observer);
+            Params p = dcs.get(id);
+            p.obs(observer);
         }
 
         public boolean send(int id, DataChannel.Buffer buffer) {
             // 不做null判断，由外部保证
-            DataChannel dc = dcs.get(id);
-            if (dc.state() == DataChannel.State.OPEN) {
-                return dc.send(buffer);
+            Params p = dcs.get(id);
+            if (p.dc.state() == DataChannel.State.OPEN) {
+                return p.dc.send(buffer);
             }
             return false;
         }
 
         public void dispose(int id) {
             // 不做null判断，由外部保证
-            DataChannel dc = dcs.get(id);
-            dc.dispose();
+            Params p = dcs.get(id);
+            p.dispose();
             dcs.remove(id);
         }
 
         public void disposeAll() {
             for (int i = dcs.size(); i > 0; i--) {
-                DataChannel dc = dcs.valueAt(0);
-                dc.dispose();
+                Params p = dcs.valueAt(0);
+                p.dispose();
                 dcs.removeAt(0);
             }
         }

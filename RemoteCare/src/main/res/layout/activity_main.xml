@@ -26,7 +26,7 @@
         android:hint="房间号"
         android:imeOptions="actionGo"
         android:inputType="textCapCharacters"
-        android:maxLength="10"
+        android:maxLength="20"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/et_nickname" />

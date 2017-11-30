@@ -1,9 +1,9 @@
 package com.adups.remotecare;
 
-import android.app.Activity;
 import android.databinding.ViewDataBinding;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
+import android.support.v4.app.FragmentActivity;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.RecyclerView.ViewHolder;
@@ -27,6 +27,7 @@ import org.appspot.apprtc.AppRTCClient.RoomConnectionParameters;
 import org.appspot.apprtc.AppRTCClient.SignalingEvents;
 import org.appspot.apprtc.AppRTCClient.SignalingParameters;
 import org.appspot.apprtc.DirectRTCClient;
+import org.appspot.apprtc.HudFragment;
 import org.appspot.apprtc.PeerConnectionClient;
 import org.appspot.apprtc.PeerConnectionClient.DataChannelParameters;
 import org.appspot.apprtc.PeerConnectionClient.PeerConnectionParameters;
@@ -39,6 +40,7 @@ import org.webrtc.IceCandidate;
 import org.webrtc.SessionDescription;
 import org.webrtc.StatsReport;
 
+import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -55,7 +57,7 @@ import static com.adups.remotecare.model.MessageDescription.TYPE_SELF;
  * Created by Dylan on 2017/11/23.
  */
 
-public class RoomActivity extends Activity implements SignalingEvents, PeerConnectionClient.PeerConnectionEvents, PeerConnectionClient.DataChannelObserver {
+public class RoomActivity extends FragmentActivity implements SignalingEvents, PeerConnectionClient.PeerConnectionEvents, PeerConnectionClient.DataChannelObserver {
 
 	public static final String TAG = "RoomActivity";
 
@@ -65,9 +67,11 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public static final String KEY_NICKNAME = "nickname";
 	public static final String KEY_MESSAGE = "message";
 
+	public static final String CHARSET_DEFAULT = "ISO-8859-1";
 	public static final int DC_CHAT = 1;
 
 	private static final String SERVER_ROOM_URL = "https://dev.remotecare.cn:9080";
+//	private static final String SERVER_ROOM_URL = "https://appr.tc";
 
 	private AppRTCClient mAppRTCClient;
 	private PeerConnectionClient mPeerConnClient;
@@ -75,6 +79,7 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	private RoomConnectionParameters mRoomConnParams;
 	private PeerConnectionParameters mPeerConnParams;
 	private SignalingParameters mSignalingParams;
+	private HudFragment mHudFragment;
 	private long mCallStartedTimeMs;
 
 
@@ -109,6 +114,16 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 			finish();
 			return;
 		}
+
+		mHudFragment = new HudFragment();
+		Bundle hudArgs = new Bundle();
+//		hudArgs.putBoolean(HudFragment.EXTRA_VIDEO_CALL, false);
+		hudArgs.putBoolean(HudFragment.EXTRA_DISPLAY_HUD, true);
+		mHudFragment.setArguments(hudArgs);
+		getSupportFragmentManager()
+				.beginTransaction()
+				.add(R.id.fragment_container, mHudFragment, "HudFragment")
+				.show(mHudFragment).commitNow();
 
 		mInput.setNickname(mMineNickname = nickname);
 
@@ -150,6 +165,9 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	}
 
 	public void onClickSend(View view) {
+		if (mInput.getContent() == null || "".equals(mInput.getContent())) {
+			return;
+		}
 		String nickname = (String) mMineNickname;
 		String message = mInput.getContent().toString();
 		JSONObject json = new JSONObject();
@@ -158,22 +176,21 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 			json.put(KEY_MESSAGE, message);
 
 			if (mPeerConnClient != null) {
-//				byte[] bytes = json.toString().getBytes("UTF-8");
-//				Log.d(TAG, "onClickSend: bytes " + new String(bytes, "UTF-8"));
-//				ByteBuffer bbuf = ByteBuffer.wrap(bytes);
-
 				ByteBuffer bbuf = encode(json.toString());
 
-				DataChannel.Buffer buffer = new DataChannel.Buffer(bbuf, false);
+				DataChannel.Buffer buffer = new DataChannel.Buffer(bbuf, true);
 				mPeerConnClient.send(DC_CHAT, buffer);
+				clearInputText();
 			}
 			logs(nickname, message, true);
 			commint();
-		} catch (JSONException e) {
-			e.printStackTrace();
-		} catch (CharacterCodingException e) {
+		} catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+
+	private void clearInputText() {
+		mEtInput.setText("");
 	}
 
 	private void setSendEnabled(boolean enabled) {
@@ -399,7 +416,6 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		Log.d(TAG, "onDataChannelAdded: label: " + dc.label() + ", state: " + dc.state());
 		runOnUiThread(() -> {
 			notice("Peer data channel added.");
-			mPeerConnClient.obs(dc, RoomActivity.this);
 			commint();
 		});
 	}
@@ -408,6 +424,11 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onPeerConnectionStatsReady(StatsReport[] reports) {
 		Log.d(TAG, "onPeerConnectionStatsReady: " + Arrays.toString(reports));
 
+		runOnUiThread(() -> {
+			if (mIceConnected) {
+				mHudFragment.updateEncoderStatistics(reports);
+			}
+		});
 	}
 
 	@Override
@@ -442,14 +463,14 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 	public void onMessage(DataChannel dc, DataChannel.Buffer buffer) {
 
 		runOnUiThread(() -> {
-			if (buffer.binary) {
-				Log.d(TAG, "Received binary msg over " + dc);
-				return;
-			}
+//			if (buffer.binary) {
+//				Log.d(TAG, "Received binary msg over " + dc);
+//				return;
+//			}
 
 			try {
 				String strData = decode(buffer.data);
-				Log.d(TAG, "Got msg: " + strData + " over " + dc);
+				Log.d(TAG, "Got msg: " + strData);
 				JSONObject json = new JSONObject(strData);
 				String nickname = json.getString(KEY_NICKNAME);
 				String message = json.getString(KEY_MESSAGE);
@@ -461,14 +482,24 @@ public class RoomActivity extends Activity implements SignalingEvents, PeerConne
 		});
 	}
 
-	private ByteBuffer encode(String str) throws CharacterCodingException {
-		return Charset.forName("UTF-8").newEncoder().encode(CharBuffer.wrap(str.toCharArray()));
+	private ByteBuffer encode(String str) throws UnsupportedEncodingException {
+		byte[] buf = /*str.getBytes();
+		Log.i(TAG, "encode: bytes-before" + str + " " + buf.length + " " + Arrays.toString(buf));
+		buf = */str.getBytes(CHARSET_DEFAULT);
+		Log.i(TAG, "encode: bytes-before" + str + " " + buf.length + " " + Arrays.toString(buf));
+		ByteBuffer buffer = ByteBuffer.wrap(buf);
+		Log.i(TAG, "encode: bytes-after" + str + " " + buf.length + " " + Arrays.toString(buffer.array()));
+		return buffer/*ByteBuffer.wrap(buf)*//*Charset.forName(CHARSET_DEFAULT).newEncoder().encode(CharBuffer.wrap(str.toCharArray()))*/;
 	}
 
-	private String decode(ByteBuffer buffer) throws CharacterCodingException {
+	private String decode(ByteBuffer buffer) throws UnsupportedEncodingException {
 //		buffer.clear();
-		Log.d(TAG, "decode: position " + buffer.position() + ", limit " + buffer.limit() + ", capacity " + buffer.capacity());
-		return Charset.forName("UTF-8").newDecoder().decode(buffer).toString();
+		byte[] buf = new byte[buffer.capacity()];
+		buffer.get(buf);
+		Log.d(TAG, "decode: position " + buffer.position() + ", limit " + buffer.limit() + ", capacity " + buffer.capacity() + ", bytes-before " + Arrays.toString(buf));
+		String str = new String(buf, CHARSET_DEFAULT)/*Charset.forName(CHARSET_DEFAULT).newDecoder().decode(buffer).toString()*/;
+		Log.d(TAG, "decode: position " + buffer.position() + ", limit " + buffer.limit() + ", capacity " + buffer.capacity() + ", bytes-after " + Arrays.toString(str.getBytes(CHARSET_DEFAULT)));
+		return str;
 	}
 
 	static class LogsAdapter extends RecyclerView.Adapter<LogsAdapter.LogsHolder> {
