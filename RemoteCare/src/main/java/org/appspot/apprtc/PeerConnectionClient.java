@@ -494,14 +494,14 @@ public class PeerConnectionClient {
             }
         });
 
-        WebRtcAudioTrack.setErrorCallback(new WebRtcAudioTrackErrorCallback() {
+        WebRtcAudioTrack.setErrorCallback(new WebRtcAudioTrack.ErrorCallback() {
             @Override
             public void onWebRtcAudioTrackInitError(String errorMessage) {
                 reportError(errorMessage);
             }
 
             @Override
-            public void onWebRtcAudioTrackStartError(String errorMessage) {
+            public void onWebRtcAudioTrackStartError(WebRtcAudioTrack.AudioTrackStartErrorCode audioTrackStartErrorCode, String errorMessage) {
                 reportError(errorMessage);
             }
 

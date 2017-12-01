@@ -67,7 +67,6 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 	public static final String KEY_NICKNAME = "nickname";
 	public static final String KEY_MESSAGE = "message";
 
-	public static final String CHARSET_DEFAULT = "ISO-8859-1";
 	public static final int DC_CHAT = 1;
 
 	private static final String SERVER_ROOM_URL = "https://dev.remotecare.cn:9080";
@@ -482,24 +481,58 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 		});
 	}
 
+	public static final int WRAP_START_LENGTH = 8;
+	public static final int WRAP_END_LENGTH = 4;
 	private ByteBuffer encode(String str) throws UnsupportedEncodingException {
-		byte[] buf = /*str.getBytes();
-		Log.i(TAG, "encode: bytes-before" + str + " " + buf.length + " " + Arrays.toString(buf));
-		buf = */str.getBytes(CHARSET_DEFAULT);
-		Log.i(TAG, "encode: bytes-before" + str + " " + buf.length + " " + Arrays.toString(buf));
-		ByteBuffer buffer = ByteBuffer.wrap(buf);
-		Log.i(TAG, "encode: bytes-after" + str + " " + buf.length + " " + Arrays.toString(buffer.array()));
-		return buffer/*ByteBuffer.wrap(buf)*//*Charset.forName(CHARSET_DEFAULT).newEncoder().encode(CharBuffer.wrap(str.toCharArray()))*/;
+		byte[] buf = str.getBytes();
+		byte[] wrap = new byte[buf.length + WRAP_START_LENGTH + WRAP_END_LENGTH];
+		System.arraycopy(buf, 0, wrap, WRAP_START_LENGTH, buf.length);
+		ByteBuffer buffer = ByteBuffer.wrap(wrap);
+		Log.i(TAG, "encode: remaining " + buffer.remaining() + ", position " + buffer.position() + ", limit " + buffer.limit() +
+				", capacity " + buffer.capacity() + ", bytes-after" + str + " " +
+				"\n" + Arrays.toString(wrap) + "\n" + toBinaryString(wrap) + "\n" + toHexString(wrap));
+		return buffer;
 	}
 
 	private String decode(ByteBuffer buffer) throws UnsupportedEncodingException {
-//		buffer.clear();
-		byte[] buf = new byte[buffer.capacity()];
-		buffer.get(buf);
-		Log.d(TAG, "decode: position " + buffer.position() + ", limit " + buffer.limit() + ", capacity " + buffer.capacity() + ", bytes-before " + Arrays.toString(buf));
-		String str = new String(buf, CHARSET_DEFAULT)/*Charset.forName(CHARSET_DEFAULT).newDecoder().decode(buffer).toString()*/;
-		Log.d(TAG, "decode: position " + buffer.position() + ", limit " + buffer.limit() + ", capacity " + buffer.capacity() + ", bytes-after " + Arrays.toString(str.getBytes(CHARSET_DEFAULT)));
+		byte[] wrap = new byte[buffer.capacity()];
+		buffer.get(wrap);
+		byte[] buf = new byte[wrap.length - (WRAP_START_LENGTH + WRAP_END_LENGTH)];
+		System.arraycopy(wrap, WRAP_START_LENGTH, buf, 0, buf.length);
+		String str = new String(buf);
+		Log.d(TAG, "decode: remaining " + buffer.remaining() + ", position " + buffer.position() + ", limit " + buffer.limit() +
+				", capacity " + buffer.capacity() + ", bytes-after " + str +
+				"\n" + Arrays.toString(wrap) + "\n" + toBinaryString(wrap) + "\n" + toHexString(wrap));
 		return str;
+	}
+
+	private String toHexString(byte[] bytes) {
+		StringBuilder sb = new StringBuilder(bytes.length);
+		for (byte b : bytes) {
+			String hex = Integer.toHexString(b);
+			if (hex.length() > 2) {
+				sb.append("-").append(hex.substring(hex.length() - 2, hex.length()));
+			} else {
+				sb.append(hex);
+			}
+			sb.append(" ");
+		}
+		return sb.toString();
+	}
+
+	private String toBinaryString(byte[] bytes) {
+		StringBuilder sb = new StringBuilder(bytes.length);
+		for (byte b : bytes) {
+			String binary = Integer.toBinaryString(b);
+			if (binary.length() < 8) {
+				sb.append("00000000".substring(binary.length()));
+				sb.append(binary);
+			} else if (binary.length() > 8) {
+				sb.append(binary.substring(binary.length() - 8, binary.length()));
+			}
+			sb.append(" ");
+		}
+		return sb.toString();
 	}
 
 	static class LogsAdapter extends RecyclerView.Adapter<LogsAdapter.LogsHolder> {
