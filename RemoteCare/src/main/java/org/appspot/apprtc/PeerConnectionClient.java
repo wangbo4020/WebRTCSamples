@@ -46,12 +46,10 @@ import org.webrtc.voiceengine.WebRtcAudioRecord;
 import org.webrtc.voiceengine.WebRtcAudioRecord.AudioRecordStartErrorCode;
 import org.webrtc.voiceengine.WebRtcAudioRecord.WebRtcAudioRecordErrorCallback;
 import org.webrtc.voiceengine.WebRtcAudioTrack;
-import org.webrtc.voiceengine.WebRtcAudioTrack.WebRtcAudioTrackErrorCallback;
 import org.webrtc.voiceengine.WebRtcAudioUtils;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -208,7 +206,7 @@ public class PeerConnectionClient {
         public final boolean disableBuiltInNS;
         public final boolean enableLevelControl;
         public final boolean disableWebRtcAGCAndHPF;
-        private final DataChannelParameters dataChannelParameters;
+        private final List<DataChannelParameters> dataChannelParameters;
 
         public PeerConnectionParameters(boolean videoCallEnabled, boolean loopback, boolean tracing,
                                         int videoWidth, int videoHeight, int videoFps, int videoMaxBitrate, String videoCodec,
@@ -219,7 +217,7 @@ public class PeerConnectionClient {
             this(videoCallEnabled, loopback, tracing, videoWidth, videoHeight, videoFps, videoMaxBitrate,
                     videoCodec, videoCodecHwAcceleration, videoFlexfecEnabled, audioStartBitrate, audioCodec,
                     noAudioProcessing, aecDump, useOpenSLES, disableBuiltInAEC, disableBuiltInAGC,
-                    disableBuiltInNS, enableLevelControl, disableWebRtcAGCAndHPF, null);
+                    disableBuiltInNS, enableLevelControl, disableWebRtcAGCAndHPF, (DataChannelParameters) null);
         }
 
         public PeerConnectionParameters(boolean videoCallEnabled, boolean loopback, boolean tracing,
@@ -229,6 +227,20 @@ public class PeerConnectionClient {
                                         boolean disableBuiltInAEC, boolean disableBuiltInAGC, boolean disableBuiltInNS,
                                         boolean enableLevelControl, boolean disableWebRtcAGCAndHPF,
                                         DataChannelParameters dataChannelParameters) {
+            this(videoCallEnabled, loopback, tracing, videoWidth, videoHeight, videoFps, videoMaxBitrate,
+                    videoCodec, videoCodecHwAcceleration, videoFlexfecEnabled, audioStartBitrate, audioCodec,
+                    noAudioProcessing, aecDump, useOpenSLES, disableBuiltInAEC, disableBuiltInAGC,
+                    disableBuiltInNS, enableLevelControl, disableWebRtcAGCAndHPF,
+                    dataChannelParameters != null ? Collections.singletonList(dataChannelParameters) : null);
+        }
+
+        public PeerConnectionParameters(boolean videoCallEnabled, boolean loopback, boolean tracing,
+                                        int videoWidth, int videoHeight, int videoFps, int videoMaxBitrate, String videoCodec,
+                                        boolean videoCodecHwAcceleration, boolean videoFlexfecEnabled, int audioStartBitrate,
+                                        String audioCodec, boolean noAudioProcessing, boolean aecDump, boolean useOpenSLES,
+                                        boolean disableBuiltInAEC, boolean disableBuiltInAGC, boolean disableBuiltInNS,
+                                        boolean enableLevelControl, boolean disableWebRtcAGCAndHPF,
+                                        List<DataChannelParameters> dataChannelParameters) {
             this.videoCallEnabled = videoCallEnabled;
             this.loopback = loopback;
             this.tracing = tracing;
@@ -617,20 +629,15 @@ public class PeerConnectionClient {
 
         peerConnection = factory.createPeerConnection(rtcConfig, pcConstraints, pcObserver);
 
+        dataChannelManager = new DataChannelManager();
         if (dataChannelEnabled) {
-            dataChannelManager = new DataChannelManager();
 
-            DataChannel.Init init = new DataChannel.Init();
-            init.ordered = peerConnectionParameters.dataChannelParameters.ordered;
-            init.negotiated = peerConnectionParameters.dataChannelParameters.negotiated;
-            init.maxRetransmits = peerConnectionParameters.dataChannelParameters.maxRetransmits;
-            init.maxRetransmitTimeMs = peerConnectionParameters.dataChannelParameters.maxRetransmitTimeMs;
-            init.id = peerConnectionParameters.dataChannelParameters.id;
-            init.protocol = peerConnectionParameters.dataChannelParameters.protocol;
-            DataChannel dataChannel = peerConnection.createDataChannel(peerConnectionParameters.dataChannelParameters.label, init);
-            dataChannelManager.manage(dataChannel);
-            dataChannelManager.obs(init.id, dataChannelObserver);
-            Log.i(TAG, "Creating data channel ApprtcDemo " + dataChannel.state());
+            for (DataChannelParameters dcParameters : peerConnectionParameters.dataChannelParameters) {
+                DataChannel dataChannel = createDataChannel(dcParameters);
+                dataChannelManager.manage(dataChannel);
+                dataChannelManager.obs(dcParameters.id, dataChannelObserver);
+                Log.i(TAG, "Creating data channel " + dataChannel.label() + " " + dataChannel.state());
+            }
         }
         isInitiator = false;
 
@@ -664,6 +671,21 @@ public class PeerConnectionClient {
         }
 
         Log.d(TAG, "Peer connection created.");
+    }
+
+    private DataChannel createDataChannel(DataChannelParameters parameters) {
+        if (peerConnection == null) {
+            Log.w(TAG, "Peer connection has not been created.");
+            return null;
+        }
+        DataChannel.Init init = new DataChannel.Init();
+        init.ordered = parameters.ordered;
+        init.negotiated = parameters.negotiated;
+        init.maxRetransmits = parameters.maxRetransmits;
+        init.maxRetransmitTimeMs = parameters.maxRetransmitTimeMs;
+        init.id = parameters.id;
+        init.protocol = parameters.protocol;
+        return peerConnection.createDataChannel(parameters.label, init);
     }
 
     private void closeInternal() {
@@ -1148,9 +1170,9 @@ public class PeerConnectionClient {
 				Log.d(TAG, "IceConnectionState: " + newState);
 				if (newState == IceConnectionState.CONNECTED) {
 					events.onIceConnected();
-				} else if (newState == IceConnectionState.DISCONNECTED) {
+				} else if (newState == IceConnectionState.DISCONNECTED) {// reconnection
 					events.onIceDisconnected();
-				} else if (newState == IceConnectionState.FAILED) {
+				} else if (newState == IceConnectionState.FAILED) {// reconnection
 					reportError("ICE connection failed.");
 				}
 			});
@@ -1195,8 +1217,8 @@ public class PeerConnectionClient {
         public void onDataChannel(final DataChannel dc) {
             Log.d(TAG, "New Data channel " + dc.label());
 
-            if (!dataChannelEnabled)
-                return;
+//            if (!dataChannelEnabled)
+//                return;
 
             executor.execute(() -> {
                 if (dataChannelManager != null) {
@@ -1292,14 +1314,12 @@ public class PeerConnectionClient {
         }
     }
 
-    public void send(int id, DataChannel.Buffer buffer) {
-        executor.execute(() -> {
-            sendSync(id, buffer);
-        });
+    public void send(int id, final DataChannel.Buffer buffer) {
+        executor.execute(() -> sendSync(id, buffer));
     }
 
     public boolean sendSync(int id, DataChannel.Buffer buffer) {
-        if (dataChannelEnabled && dataChannelManager != null) {
+        if (/*dataChannelEnabled && */dataChannelManager != null) {
             return dataChannelManager.send(id, buffer);
         } else {
             return false;
@@ -1380,7 +1400,11 @@ public class PeerConnectionClient {
         private SparseArray<Params> dcs;
 
         public DataChannelManager() {
-            this.dcs = new SparseArray<Params>(1);
+            this(1);
+        }
+
+        public DataChannelManager(int capacity) {
+            this.dcs = new SparseArray<Params>(capacity);
         }
 
         public void manage(DataChannel dc, boolean remote) {
@@ -1424,4 +1448,5 @@ public class PeerConnectionClient {
             }
         }
     }
+
 }

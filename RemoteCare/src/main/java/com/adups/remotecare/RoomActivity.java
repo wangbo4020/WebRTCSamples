@@ -33,7 +33,6 @@ import org.appspot.apprtc.PeerConnectionClient.DataChannelParameters;
 import org.appspot.apprtc.PeerConnectionClient.PeerConnectionParameters;
 import org.appspot.apprtc.ProxyRenderer;
 import org.appspot.apprtc.WebSocketRTCClient;
-import org.json.JSONException;
 import org.json.JSONObject;
 import org.webrtc.DataChannel;
 import org.webrtc.IceCandidate;
@@ -42,9 +41,6 @@ import org.webrtc.StatsReport;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -67,7 +63,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 	public static final String KEY_NICKNAME = "nickname";
 	public static final String KEY_MESSAGE = "message";
 
-	public static final int DC_CHAT = 1;
+	public static final int DC_CHATLOGS = 1;
 
 	private static final String SERVER_ROOM_URL = "https://dev.remotecare.cn:9080";
 //	private static final String SERVER_ROOM_URL = "https://appr.tc";
@@ -178,7 +174,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 				ByteBuffer bbuf = encode(json.toString());
 
 				DataChannel.Buffer buffer = new DataChannel.Buffer(bbuf, true);
-				mPeerConnClient.send(DC_CHAT, buffer);
+				mPeerConnClient.send(DC_CHATLOGS, buffer);
 				clearInputText();
 			}
 			logs(nickname, message, true);
@@ -231,7 +227,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 	private PeerConnectionParameters createPeerConnectionParameters() {
 		DataChannelParameters dataChannelParameters =
 //				null;
-				new DataChannelParameters("Demo-" + DC_CHAT, true, -1, 3, "", true, DC_CHAT);
+				new DataChannelParameters("Demo-" + DC_CHATLOGS, true, -1, 3, "", true, DC_CHATLOGS);
 		return new PeerConnectionParameters(
 				false, false, false,
 				0, 0, 0, 0,
@@ -415,6 +411,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 		Log.d(TAG, "onDataChannelAdded: label: " + dc.label() + ", state: " + dc.state());
 		runOnUiThread(() -> {
 			notice("Peer data channel added.");
+			setSendEnabled(dc.state() == DataChannel.State.OPEN);
 			commint();
 		});
 	}
@@ -451,7 +448,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 		Log.d(TAG, "Data channel state changed: " + dc.label() + ": " + dc.state());
 		runOnUiThread(() -> {
 			switch (dc.id()) {
-				case DC_CHAT:
+				case DC_CHATLOGS:
 					setSendEnabled(dc.state() == DataChannel.State.OPEN);
 					break;
 			}
@@ -481,7 +478,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 		});
 	}
 
-	public static final int WRAP_START_LENGTH = 8;
+	public static final int WRAP_START_LENGTH = 24;
 	public static final int WRAP_END_LENGTH = 4;
 	private ByteBuffer encode(String str) throws UnsupportedEncodingException {
 		byte[] buf = str.getBytes();
@@ -490,7 +487,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 		ByteBuffer buffer = ByteBuffer.wrap(wrap);
 		Log.i(TAG, "encode: remaining " + buffer.remaining() + ", position " + buffer.position() + ", limit " + buffer.limit() +
 				", capacity " + buffer.capacity() + ", bytes-after" + str + " " +
-				"\n" + Arrays.toString(wrap) + "\n" + toBinaryString(wrap) + "\n" + toHexString(wrap));
+				"\n" + Arrays.toString(wrap)/* + "\n" + toBinaryString(wrap) + "\n" + toHexString(wrap)*/);
 		return buffer;
 	}
 
@@ -502,7 +499,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 		String str = new String(buf);
 		Log.d(TAG, "decode: remaining " + buffer.remaining() + ", position " + buffer.position() + ", limit " + buffer.limit() +
 				", capacity " + buffer.capacity() + ", bytes-after " + str +
-				"\n" + Arrays.toString(wrap) + "\n" + toBinaryString(wrap) + "\n" + toHexString(wrap));
+				"\n" + Arrays.toString(wrap)/* + "\n" + toBinaryString(wrap) + "\n" + toHexString(wrap)*/);
 		return str;
 	}
 

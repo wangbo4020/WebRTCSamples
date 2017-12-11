@@ -320,7 +320,7 @@ public class WebSocketRTCClient implements AppRTCClient, WebSocketChannelEvents 
 	}
 
 	@Override
-	public void onWebSocketClose() {
+	public void onWebSocketClose() {// reconnection
 		events.onChannelClose();
 	}
 
