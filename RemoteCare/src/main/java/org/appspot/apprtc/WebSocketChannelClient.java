@@ -21,9 +21,9 @@ import org.json.JSONObject;
 import java.util.LinkedList;
 
 import io.crossbar.autobahn.websocket.WebSocketConnection;
-import io.crossbar.autobahn.websocket.exceptions.WebSocketException;
 import io.crossbar.autobahn.websocket.WebSocketConnectionHandler;
-import io.crossbar.autobahn.websocket.types.ConnectionResponse;
+import io.crossbar.autobahn.websocket.exceptions.WebSocketException;
+import io.crossbar.autobahn.websocket.types.WebSocketOptions;
 
 /**
  * WebSocket client implementation.
@@ -39,6 +39,7 @@ public class WebSocketChannelClient {
 	private final WebSocketChannelEvents events;
 	private final Handler handler;
 	private WebSocketConnection ws;
+	private WebSocketOptions wsOptions;
 	private WebSocketObserver wsObserver;
 	private String wsServerUrl;
 	private String postServerUrl;
@@ -95,9 +96,12 @@ public class WebSocketChannelClient {
 
 		Log.d(TAG, "Connecting WebSocket to: " + wsUrl + ". Post URL: " + postUrl);
 		ws = new WebSocketConnection();
+		wsOptions = new WebSocketOptions();
 		wsObserver = new WebSocketObserver();
+
+		wsOptions.setReconnectInterval(5000);
 		try {
-			ws.connect(/*new URI*/(wsServerUrl), wsObserver);
+			ws.connect(/*new URI*/(wsServerUrl), wsObserver, wsOptions);
 		} catch (WebSocketException e) {
 			reportError("WebSocket connection error: " + e.getMessage());
 		}
@@ -133,29 +137,29 @@ public class WebSocketChannelClient {
 	public void send(String message) {
 		checkIfCalledOnValidThread();
 		switch (state) {
-			case NEW:
-			case CONNECTED:
-				// Store outgoing messages and send them after websocket client
-				// is registered.
-				Log.d(TAG, "WS ACC: " + message);
-				wsSendQueue.add(message);
-				return;
-			case ERROR:
-			case CLOSED:
-				Log.e(TAG, "WebSocket send() in error or closed state : " + message);
-				return;
-			case REGISTERED:
-				JSONObject json = new JSONObject();
-				try {
-					json.put("cmd", "send");
-					json.put("msg", message);
-					message = json.toString();
-					Log.d(TAG, "C->WSS: " + message);
-					ws.sendMessage(message);
-				} catch (JSONException e) {
-					reportError("WebSocket send JSON error: " + e.getMessage());
-				}
-				break;
+		case NEW:
+		case CONNECTED:
+			// Store outgoing messages and send them after websocket client
+			// is registered.
+			Log.d(TAG, "WS ACC: " + message);
+			wsSendQueue.add(message);
+			return;
+		case ERROR:
+		case CLOSED:
+			Log.e(TAG, "WebSocket send() in error or closed state : " + message);
+			return;
+		case REGISTERED:
+			JSONObject json = new JSONObject();
+			try {
+				json.put("cmd", "send");
+				json.put("msg", message);
+				message = json.toString();
+				Log.d(TAG, "C->WSS: " + message);
+				ws.sendMessage(message);
+			} catch (JSONException e) {
+				reportError("WebSocket send JSON error: " + e.getMessage());
+			}
+			break;
 		}
 	}
 
@@ -236,7 +240,8 @@ public class WebSocketChannelClient {
 		}
 	}
 
-	private class WebSocketObserver extends WebSocketConnectionHandler {
+	private class WebSocketObserver
+			extends WebSocketConnectionHandler {
 
 		@Override
 		public void onOpen() {
@@ -253,7 +258,22 @@ public class WebSocketChannelClient {
 		@Override
 		public void onClose(int code, String reason) {
 			Log.d(TAG, "WebSocket connection closed. Code: " + code + ". Reason: " + reason + ". State: "
-					+ state);
+			           + state);
+			switch (code) {
+			case CLOSE_NORMAL:
+				break;
+			case CLOSE_CANNOT_CONNECT:
+			case CLOSE_CONNECTION_LOST:
+			case CLOSE_PROTOCOL_ERROR:
+			case CLOSE_SERVER_ERROR:
+				break;
+			case CLOSE_INTERNAL_ERROR:
+				// 在WiFi切换为流量时，必报此错
+				// Code: 5. Reason: WebSockets internal error (javax.net.ssl.SSLException: Read error: ssl=0x7f7d6cd880: I/O error during system call, Connection timed out).
+				handler.postDelayed(() -> ws.reconnect(), wsOptions.getReconnectInterval());// 必须使用post，否则内部将会忽略调用
+			case CLOSE_RECONNECT:
+				return;
+			}
 			synchronized (closeEventLock) {
 				closeEvent = true;
 				closeEventLock.notify();
@@ -272,7 +292,7 @@ public class WebSocketChannelClient {
 			final String message = payload;
 			handler.post(() -> {
 				if (state == WebSocketConnectionState.CONNECTED
-						|| state == WebSocketConnectionState.REGISTERED) {
+				    || state == WebSocketConnectionState.REGISTERED) {
 					events.onWebSocketMessage(message);
 				}
 			});

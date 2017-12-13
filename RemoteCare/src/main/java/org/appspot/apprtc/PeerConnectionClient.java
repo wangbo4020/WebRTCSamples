@@ -29,6 +29,7 @@ import org.webrtc.MediaStream;
 import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnection.IceConnectionState;
 import org.webrtc.PeerConnectionFactory;
+import org.webrtc.PeerConnectionFactory.InitializationOptions;
 import org.webrtc.RtpParameters;
 import org.webrtc.RtpReceiver;
 import org.webrtc.RtpSender;
@@ -398,7 +399,6 @@ public class PeerConnectionClient {
     }
 
     private void createPeerConnectionFactoryInternal(Context context) {
-        PeerConnectionFactory.initializeInternalTracer();
         if (peerConnectionParameters.tracing) {
             PeerConnectionFactory.startInternalTracingCapture(
                     Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
@@ -444,7 +444,7 @@ public class PeerConnectionClient {
             }
         }
         Log.d(TAG, "Preferred video codec: " + preferredVideoCodec);
-        PeerConnectionFactory.initializeFieldTrials(fieldTrials);
+//        PeerConnectionFactory.initializeFieldTrials(fieldTrials);
         Log.d(TAG, "Field trials: " + fieldTrials);
 
         // Check if ISAC is used by default.
@@ -524,8 +524,15 @@ public class PeerConnectionClient {
         });
 
         // Create peer connection factory.
-        PeerConnectionFactory.initializeAndroidGlobals(
-                context, peerConnectionParameters.videoCodecHwAcceleration);
+        InitializationOptions initializationOptions =
+                InitializationOptions
+                        .builder(context)
+                        .setEnableVideoHwAcceleration(peerConnectionParameters.videoCodecHwAcceleration)
+                        .setEnableInternalTracer(true)
+                        .setFieldTrials(fieldTrials)
+                        .createInitializationOptions();
+        PeerConnectionFactory.initialize(initializationOptions);
+
         if (options != null) {
             Log.d(TAG, "Factory networkIgnoreMask option: " + options.networkIgnoreMask);
         }
@@ -1370,7 +1377,7 @@ public class PeerConnectionClient {
             }
 
 
-            public void onBufferedAmountChange(long previousAmount) {
+            public void onBufferedAmountChange(final long previousAmount) {
                 executor.execute(() -> {
                     if (dcObs != null) {
                         dcObs.onBufferedAmountChange(dc, previousAmount);
@@ -1388,7 +1395,7 @@ public class PeerConnectionClient {
             }
 
             @Override
-            public void onMessage(DataChannel.Buffer buffer) {
+            public void onMessage(final DataChannel.Buffer buffer) {
                 executor.execute(() -> {
                     if (dcObs != null) {
                         dcObs.onMessage(dc, buffer);

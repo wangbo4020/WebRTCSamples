@@ -322,6 +322,21 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 	}
 
 	@Override
+	public void onChannelStateChanged(int state, String reason) {
+		Log.d(TAG, "onChannelStateChanged: state: " + state + " reason: " + reason);
+		runOnUiThread(() -> {
+			switch (state) {
+			case SignalingEvents.STATE_RECONNECTING:
+				notice("Reconnecting...");
+				break;
+			case SignalingEvents.STATE_CONNECTED:
+				notice("Reconnecting...");
+				break;
+			}
+		});
+	}
+
+	@Override
 	public void onChannelClose() {
 		Log.d(TAG, "onChannelClose: ");
 		runOnUiThread(() -> {
@@ -456,7 +471,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 	}
 
 	@Override
-	public void onMessage(DataChannel dc, DataChannel.Buffer buffer) {
+	public void onMessage(final DataChannel dc, final DataChannel.Buffer buffer) {
 
 		runOnUiThread(() -> {
 //			if (buffer.binary) {

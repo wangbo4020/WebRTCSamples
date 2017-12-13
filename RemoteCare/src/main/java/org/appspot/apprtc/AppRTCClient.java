@@ -105,6 +105,17 @@ public interface AppRTCClient {
 	 * <p>Methods are guaranteed to be invoked on the UI thread of |activity|.
 	 */
 	interface SignalingEvents {
+
+		/**
+		 * 已连接
+		 */
+		int STATE_CONNECTED = 1;
+		/**
+		 * 重连中
+		 */
+		int STATE_RECONNECTING = 2;
+
+
 		/**
 		 * Callback fired once the room's signaling parameters
 		 * SignalingParameters are extracted.
@@ -125,6 +136,11 @@ public interface AppRTCClient {
 		 * Callback fired once remote Ice candidate removals are received.
 		 */
 		void onRemoteIceCandidatesRemoved(final IceCandidate[] candidates);
+
+		/**
+		 * Callback fired once channel is state changed.
+		 */
+		void onChannelStateChanged(int state, String reason);
 
 		/**
 		 * Callback fired once channel is closed.
