@@ -33,7 +33,7 @@ dependencies {
     //--调试诊断工具--
     debugCompile 'com.github.markzhai:blockcanary-android:1.4.0'
     releaseCompile 'com.github.markzhai:blockcanary-no-op:1.4.0'
-    debugCompile 'com.squareup.leakcanary:leakcanary-android:1.4'
-    releaseCompile 'com.squareup.leakcanary:leakcanary-android-no-op:1.4'
+    debugCompile 'com.squareup.leakcanary:leakcanary-android:1.5.1'
+    releaseCompile 'com.squareup.leakcanary:leakcanary-android-no-op:1.5.1'
     implementation 'org.webrtc:google-webrtc:1.0.+'
 }

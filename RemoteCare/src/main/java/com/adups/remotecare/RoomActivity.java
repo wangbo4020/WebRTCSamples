@@ -229,7 +229,7 @@ public class RoomActivity extends FragmentActivity implements SignalingEvents, P
 //				null;
 				new DataChannelParameters("Demo-" + DC_CHATLOGS, true, -1, 3, "", true, DC_CHATLOGS);
 		return new PeerConnectionParameters(
-				false, false, false,
+				false, false, false, false,
 				0, 0, 0, 0,
 				null, false, false,
 				0, null, true, false,

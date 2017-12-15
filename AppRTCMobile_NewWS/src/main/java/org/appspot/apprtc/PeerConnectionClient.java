@@ -368,7 +368,7 @@ public class PeerConnectionClient {
     }
 
     private void createPeerConnectionFactoryInternal(Context context) {
-        PeerConnectionFactory.initializeInternalTracer();
+//        PeerConnectionFactory.initializeInternalTracer();
         if (peerConnectionParameters.tracing) {
             PeerConnectionFactory.startInternalTracingCapture(
                     Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
@@ -414,7 +414,7 @@ public class PeerConnectionClient {
             }
         }
         Log.d(TAG, "Preferred video codec: " + preferredVideoCodec);
-        PeerConnectionFactory.initializeFieldTrials(fieldTrials);
+//        PeerConnectionFactory.initializeFieldTrials(fieldTrials);
         Log.d(TAG, "Field trials: " + fieldTrials);
 
         // Check if ISAC is used by default.
@@ -494,8 +494,16 @@ public class PeerConnectionClient {
         });
 
         // Create peer connection factory.
-        PeerConnectionFactory.initializeAndroidGlobals(
-                context, peerConnectionParameters.videoCodecHwAcceleration);
+        PeerConnectionFactory.InitializationOptions initializationOptions =
+                PeerConnectionFactory.InitializationOptions
+                        .builder(context)
+                        .setEnableVideoHwAcceleration(peerConnectionParameters.videoCodecHwAcceleration)
+                        .setEnableInternalTracer(true)
+                        .setFieldTrials(fieldTrials)
+                        .createInitializationOptions();
+        PeerConnectionFactory.initialize(initializationOptions);
+//        PeerConnectionFactory.initializeAndroidGlobals(
+//                context, peerConnectionParameters.videoCodecHwAcceleration);
         if (options != null) {
             Log.d(TAG, "Factory networkIgnoreMask option: " + options.networkIgnoreMask);
         }
